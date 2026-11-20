@@ -526,7 +526,7 @@ static bool pairGrant(const String& pin) {
 }
 
 // ---------------------------------------------------------------- network worker (core 0)
-enum CmdType : uint8_t { CM_KEY, CM_POWER, CM_AMBI, CM_POLL };
+enum CmdType : uint8_t { CM_KEY, CM_POWER, CM_AMBI, CM_SOURCES, CM_POLL };
 struct Cmd { CmdType type; char key[24]; };
 static QueueHandle_t cmdQ;
 
@@ -660,6 +660,24 @@ static void doPower() {
   }
 }
 
+// Android Philips sets ignore the Source key over the network, so open their Sources drawer
+// directly (the intent the TV lists in /6/applications). Older sets still get the key.
+static void doSources() {
+  if (tv.api >= 6) {
+    String out;
+    int code = tv.request("POST", "activities/launch",
+                          "{\"id\":\"org.droidtv.sources.SourcesDrawerActivity-org.droidtv.settings\",\"intent\":{\"component\":"
+                          "{\"packageName\":\"org.droidtv.settings\",\"className\":\"org.droidtv.sources.SourcesDrawerActivity\"},"
+                          "\"action\":\"Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] "
+                          "flg=0x10000000 pkg=org.droidtv.settings cmp=org.droidtv.settings/.SetupMenuAlias }\"}}",
+                          out);
+    Serial.printf("[sources] launch -> %d\n", code);
+    stateFromCode(code);
+    if (code == 200) return;
+  }
+  sendKey("Source");
+}
+
 static void doAmbilight() {
   String out;
   if (tv.api >= 6 && tv.request("GET", "ambilight/power", "", out) == 200) {
@@ -694,6 +712,7 @@ static void netTask(void*) {
         break;
       case CM_POWER: doPower(); break;
       case CM_AMBI: doAmbilight(); break;
+      case CM_SOURCES: doSources(); break;
       case CM_POLL:
         pollPower();
         if (tvState == TS_ON || tvState == TS_STANDBY) learnMac();
@@ -716,7 +735,7 @@ static void queueCmd(CmdType t, const char* key = "") {
 enum Screen { S_REMOTE, S_MORE, S_SETTINGS, S_FIND, S_PAD, S_INFO, S_AP };
 enum Shape : uint8_t { SH_RR, SH_CIRCLE, SH_DPAD, SH_OK, SH_TAB, SH_CARD };
 enum Act : uint8_t {
-  A_NONE, A_KEY, A_POWER, A_AMBI, A_TAB, A_SETTINGS, A_DONE, A_FIND, A_ENTER_IP, A_PICK, A_CHAR, A_BKSP, A_PAD_OK,
+  A_NONE, A_KEY, A_POWER, A_AMBI, A_SOURCES, A_TAB, A_SETTINGS, A_DONE, A_FIND, A_ENTER_IP, A_PICK, A_CHAR, A_BKSP, A_PAD_OK,
   A_PAD_CANCEL, A_REPAIR, A_CALIB, A_WIFI, A_INFO1, A_INFO2, A_RESTART
 };
 enum Icon : uint8_t {
@@ -997,7 +1016,7 @@ static void buildRemote() {
   addPower();
   // top row
   const int RW = 68, RX = 12, RG = 8, RY = 62, RH = 38;
-  add(RX + 0 * (RW + RG), RY, RW, RH, A_KEY, "Source", "Sources");
+  add(RX + 0 * (RW + RG), RY, RW, RH, A_SOURCES, nullptr, "Sources");
   add(RX + 1 * (RW + RG), RY, RW, RH, A_KEY, "WatchTV", "TV");
   add(RX + 2 * (RW + RG), RY, RW, RH, A_KEY, "Home", "", IC_HOME);
   add(RX + 3 * (RW + RG), RY, RW, RH, A_AMBI, nullptr, "Ambi");
@@ -1432,6 +1451,7 @@ static void fire(int i) {
     case A_KEY: queueCmd(CM_KEY, b.key); break;
     case A_POWER: queueCmd(CM_POWER); break;
     case A_AMBI: queueCmd(CM_AMBI); break;
+    case A_SOURCES: queueCmd(CM_SOURCES); break;
     case A_CHAR:
       if (padText.length() < (padIp ? 15u : 8u)) { padText += (char)b.arg; drawPadField(); }
       break;
